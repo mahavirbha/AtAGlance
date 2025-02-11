@@ -1,3 +1,4 @@
+// app/_layout.js
 import auth from "@react-native-firebase/auth";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { useEffect, useState } from "react";
@@ -24,8 +25,6 @@ export default function RootLayout() {
     if (initializing) return;
 
     const inAuthGroup = segments[0] === "(auth)";
-
-    console.log("inAuthGroup", user, inAuthGroup);
 
     if (user) {
       router.replace(inAuthGroup ? "/" : "/(tabs)/home");

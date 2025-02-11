@@ -1,5 +1,6 @@
+// app/index.js
 import auth from "@react-native-firebase/auth";
-import { FirebaseError } from "firebase/app";
+import { GoogleSignin } from "@react-native-google-signin/google-signin";
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -9,6 +10,12 @@ import {
   TextInput,
   View,
 } from "react-native";
+
+GoogleSignin.configure({
+  webClientId:
+    "685322734996-5v509dmq3sen168tjf5ani3kridihkpe.apps.googleusercontent.com",
+  scopes: ["email", "profile"],
+});
 
 export default function Index() {
   const [email, setEmail] = useState("");
@@ -20,9 +27,8 @@ export default function Index() {
     try {
       await auth().createUserWithEmailAndPassword(email, password);
       alert("Check your emails!");
-    } catch (e: any) {
-      const err = e as FirebaseError;
-      alert("Registration failed: " + err.message);
+    } catch (e) {
+      alert("Registration failed: " + e.message);
     } finally {
       setLoading(false);
     }
@@ -32,11 +38,35 @@ export default function Index() {
     setLoading(true);
     try {
       await auth().signInWithEmailAndPassword(email, password);
-    } catch (e: any) {
-      const err = e as FirebaseError;
-      alert("Sign in failed: " + err.message);
+    } catch (e) {
+      alert("Sign in failed: " + e.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onGoogleButtonPress = async () => {
+    try {
+      await GoogleSignin.signOut(); // Optional: Only if you need to force re-authentication
+
+      // Check Play Services
+      await GoogleSignin.hasPlayServices({
+        showPlayServicesUpdateDialog: true,
+      });
+
+      // Sign in
+      const googleSignInResult = await GoogleSignin.signIn();
+      const { idToken } = googleSignInResult?.data;
+
+      if (idToken) {
+        // Create Firebase credential
+        const googleCredential = auth.GoogleAuthProvider.credential(idToken);
+
+        // Sign in to Firebase
+        await auth().signInWithCredential(googleCredential);
+      }
+    } catch (error) {
+      console.error("Google Sign-In Error:", error);
     }
   };
 
@@ -59,11 +89,16 @@ export default function Index() {
           placeholder="Password"
         />
         {loading ? (
-          <ActivityIndicator size={"small"} style={{ margin: 28 }} />
+          <ActivityIndicator size="small" style={{ margin: 28 }} />
         ) : (
           <View style={{ gap: 8, paddingTop: 16 }}>
             <Button onPress={signIn} title="Login" />
             <Button onPress={signUp} title="Create account" />
+            <Button
+              title="Sign In with Google"
+              color="green"
+              onPress={() => onGoogleButtonPress()}
+            />
           </View>
         )}
       </KeyboardAvoidingView>

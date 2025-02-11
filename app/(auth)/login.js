@@ -1,19 +1,4 @@
 // // app/(auth)/login.js
-// import { Button, Text, View } from "react-native";
-// import { useAuth } from "../../context/auth";
-// import LoginWithGoogle from "./components/LoginWithGoogle";
-
-// export default function LoginScreen() {
-//   const { login } = useAuth();
-
-//   return (
-//     <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-//       <Text>Login Screen</Text>
-//       <Button title="Log In" onPress={login} />
-//       <LoginWithGoogle />
-//     </View>
-//   );
-// }
 
 import auth from "@react-native-firebase/auth";
 import { useState } from "react";
