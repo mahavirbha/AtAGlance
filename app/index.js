@@ -1,6 +1,7 @@
 // app/index.js
 import auth from "@react-native-firebase/auth";
 import { GoogleSignin } from "@react-native-google-signin/google-signin";
+import { router } from "expo-router";
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -64,6 +65,9 @@ export default function Index() {
 
         // Sign in to Firebase
         await auth().signInWithCredential(googleCredential);
+
+        // Navigate to the home screen
+        router.replace("/(tabs)/home");
       }
     } catch (error) {
       console.error("Google Sign-In Error:", error);
