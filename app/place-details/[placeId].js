@@ -160,6 +160,9 @@ export default function PlaceDetailsScreen() {
   const [currentSentimentScore, setCurrentSentimentScore] = useState(0);
   const [historicalScore, setHistoricalScore] = useState(0);
 
+  const HISTORICAL_WEIGHT = 0.6; // 60% weight for historical sentiment
+  const RATING_WEIGHT = 0.4;     // 40% weight for Google rating
+
   useEffect(() => {
     const getPlaceDetails = async () => {
       try {
@@ -176,11 +179,25 @@ export default function PlaceDetailsScreen() {
             await saveHistoricalData(placeId, aggregatedData, details.rating || 0);
             setCurrentSentimentScore(aggregatedData.currentSentimentScore);
             setHistoricalScore(aggregatedData.historicalSentimentScore);
-            setFinalScore((aggregatedData.historicalSentimentScore + (details.rating || 0)) / 2);
+            
+            // Calculate weighted final score out of 100
+            const weightedScore = (
+              (aggregatedData.historicalSentimentScore * HISTORICAL_WEIGHT) + 
+              ((details.rating || 0) * RATING_WEIGHT)
+            ) * 20; // Convert to 0-100 scale
+            
+            setFinalScore(weightedScore);
           } else {
             setCurrentSentimentScore(0);
             setHistoricalScore(historicalData.historicalSentimentScore || 0);
-            setFinalScore((historicalData.historicalSentimentScore + (details.rating || 0)) / 2);
+            
+            // Calculate weighted final score out of 100 using historical data
+            const weightedScore = (
+              ((historicalData.historicalSentimentScore || 0) * HISTORICAL_WEIGHT) + 
+              ((details.rating || 0) * RATING_WEIGHT)
+            ) * 20; // Convert to 0-100 scale
+            
+            setFinalScore(weightedScore);
           }
         }
       } catch (error) {
