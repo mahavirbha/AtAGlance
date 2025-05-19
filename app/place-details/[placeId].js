@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { fetchPlaceDetails } from "../../scripts/placesApi";
-import { LineChart } from "react-native-gifted-charts";
-import { useGlobalSearchParams, useSearchParams } from "expo-router";
-
+import { useGlobalSearchParams } from "expo-router";
 import { db } from "../../firebaseConfig";
 import {
   collection,
@@ -11,197 +9,182 @@ import {
   where,
   getDocs,
   orderBy,
-  addDoc,
-  serverTimestamp,
   setDoc,
   doc,
+  getDoc,
+  serverTimestamp,
 } from "firebase/firestore";
 import { analyzeSentiment } from "../../scripts/sentimentAnalysis";
 
-const calculateSentimentScore = (reviews) => {
-  if (!reviews) return 0;
-
-  const sentimentScores = reviews.map((review) => {
-    const sentiment = analyzeSentiment(review.text);
-    console.log("Sentiment Analysis Result:", sentiment);
-    return sentiment.score;
-  });
-
-  const totalScore = sentimentScores.reduce((acc, score) => acc + score, 0);
-  return totalScore / reviews.length;
-};
-
-const fetchHistoricalScores = async (placeId) => {
+const fetchHistoricalData = async (placeId) => {
   try {
-    console.log("Fetching historical scores for placeId:", placeId);
+    const docRef = doc(db, "placeScores", placeId);
+    const docSnap = await getDoc(docRef);
 
-    // Query the collection
-    const q = query(
-      collection(db, "placeScores"),
-      where("placeId", "==", placeId),
-      orderBy("timestamp", "asc")
-    );
-    console.log("Query created:", q);
-
-    const querySnapshot = await getDocs(q);
-    console.log("Query snapshot:", querySnapshot);
-
-    const scores = [];
-    querySnapshot.forEach((doc) => {
-      console.log("Document data:", doc.data());
-      scores.push({ id: doc.id, ...doc.data() });
-    });
-
-    console.log("Fetched scores:", scores);
-
-    // If no documents exist, add a placeholder document
-    if (scores.length === 0) {
-      console.log("No historical scores found. Adding a placeholder.");
-      const placeholderDocRef = doc(collection(db, "placeScores"));
-      await setDoc(placeholderDocRef, {
-        placeId,
-        sentimentScore: 0, // Default score
-        timestamp: serverTimestamp(),
-      });
-      console.log("Placeholder document added.");
+    if (docSnap.exists()) {
+      return docSnap.data();
     }
-
-    return scores;
+    return {
+      reviewCount: 0,
+      processedReviewIds: [],
+      totalSentimentSum: 0,
+      historicalSentimentScore: 0
+    };
   } catch (error) {
-    console.error("Error fetching historical scores:", error);
-    return [];
+    console.error("Error fetching historical data:", error);
+    return null;
   }
 };
 
-const saveSentimentScore = async (placeId, sentimentScore) => {
-  try {
-    console.log("Saving sentiment score for placeId:", placeId);
-
-    // Add or update the document
-    const docRef = doc(collection(db, "placeScores"), placeId);
-    await setDoc(
-      docRef,
-      {
-        placeId,
-        sentimentScore,
-        timestamp: serverTimestamp(),
-      },
-      { merge: true }
-    ); // Merge ensures existing fields are not overwritten
-
-    console.log("Sentiment score saved successfully.");
-  } catch (error) {
-    console.error("Error saving sentiment score:", error);
-  }
-};
-
-const calculateFinalScore = (
-  historicalScores,
-  currentSentimentScore,
-  reviewScore
-) => {
-  // Calculate the average historical score
-  const historicalAverage =
-    historicalScores.length > 0
-      ? historicalScores.reduce(
-          (acc, score) => acc + (score.sentimentScore || 0),
-          0
-        ) / historicalScores.length
+const calculateAggregatedScore = (historicalData, newReviews) => {
+  const processedReviewIds = historicalData?.processedReviewIds || [];
+  const historicalSentimentSum = historicalData?.totalSentimentSum || 0;
+  const historicalReviewCount = historicalData?.reviewCount || 0;
+  
+  const unprocessedReviews = newReviews.filter(review => 
+    !processedReviewIds.includes(review.time?.toString() || review.author_name)
+  );
+  
+  if (unprocessedReviews.length === 0) {
+    const historicalAverage = historicalReviewCount > 0 
+      ? historicalSentimentSum / historicalReviewCount 
       : 0;
 
-  // Ensure all scores are valid numbers
-  const validSentimentScore = isNaN(currentSentimentScore)
-    ? 0
-    : currentSentimentScore;
-  const validReviewScore = isNaN(reviewScore) ? 0 : reviewScore;
+    return {
+      reviewCount: historicalReviewCount,
+      processedReviewIds: processedReviewIds,
+      totalSentimentSum: historicalSentimentSum,
+      historicalSentimentScore: historicalAverage,
+      currentSentimentScore: 0,
+      newReviewsProcessed: 0
+    };
+  }
 
-  // Normalize scores to a scale of 0-100
-  console.log("historicalAverage:", historicalAverage);
-  console.log("validSentimentScore:", validSentimentScore);
-  console.log("validReviewScore:", validReviewScore);
-  const normalizedHistoricalScore = historicalAverage * 20; // Assuming historical scores are out of 5
-  const normalizedSentimentScore = validSentimentScore * 20; // Assuming sentiment scores are out of 5
-  const normalizedReviewScore = validReviewScore * 20; // Assuming review scores are out of 5
+  const newReviewResults = unprocessedReviews.map(review => {
+    const sentiment = analyzeSentiment(review.text);
+    return {
+      id: review.time?.toString() || review.author_name,
+      score: sentiment.score
+    };
+  });
 
-  // Assign weights to each component
-  const historicalWeight = 0.4; // 40% weight
-  const sentimentWeight = 0.4; // 40% weight
-  const reviewWeight = 0.2; // 20% weight
+  const newSentimentSum = newReviewResults.reduce((sum, result) => sum + result.score, 0);
+  const currentSentimentScore = newReviewResults.length > 0 
+    ? newSentimentSum / newReviewResults.length 
+    : 0;
 
-  // Calculate the final score
-  const finalScore =
-    normalizedHistoricalScore * historicalWeight +
-    normalizedSentimentScore * sentimentWeight +
-    normalizedReviewScore * reviewWeight;
+  const newTotalSum = historicalSentimentSum + newSentimentSum;
+  const newTotalCount = historicalReviewCount + unprocessedReviews.length;
+  const historicalAverage = newTotalCount > 0 ? newTotalSum / newTotalCount : 0;
+  const newProcessedIds = newReviewResults.map(result => result.id);
 
-  return Math.round(finalScore); // Return final score rounded to the nearest integer
+  return {
+    reviewCount: newTotalCount,
+    processedReviewIds: [...processedReviewIds, ...newProcessedIds],
+    totalSentimentSum: newTotalSum,
+    historicalSentimentScore: historicalAverage,
+    currentSentimentScore: currentSentimentScore,
+    newReviewsProcessed: unprocessedReviews.length
+  };
 };
 
-const saveFinalScore = async (placeId, finalScore) => {
+const saveHistoricalData = async (placeId, aggregatedData, placeRating) => {
   try {
-    console.log("Saving final score for placeId:", placeId);
+    const docRef = doc(db, "placeScores", placeId);
+    const dataToSave = {
+      placeId,
+      reviewCount: aggregatedData.reviewCount,
+      processedReviewIds: aggregatedData.processedReviewIds,
+      totalSentimentSum: aggregatedData.totalSentimentSum,
+      historicalSentimentScore: aggregatedData.historicalSentimentScore,
+      lastCalculatedRating: placeRating,
+      lastUpdated: serverTimestamp(),
+    };
 
-    // Add or update the document
-    const docRef = doc(collection(db, "placeScores"), placeId);
-    await setDoc(
-      docRef,
-      {
-        placeId,
-        finalScore,
-        timestamp: serverTimestamp(),
-      },
-      { merge: true }
-    ); // Merge ensures existing fields are not overwritten
+    console.log("\n=== Saving Historical Data for PlaceID:", placeId, "===");
+    console.log({
+      reviewCount: dataToSave.reviewCount,
+      totalSentimentSum: dataToSave.totalSentimentSum,
+      historicalSentimentScore: dataToSave.historicalSentimentScore,
+      processedReviewCount: dataToSave.processedReviewIds.length,
+      lastUpdated: new Date().toISOString()
+    });
 
-    console.log("Final score saved successfully.");
+    await setDoc(docRef, dataToSave, { merge: true });
   } catch (error) {
-    console.error("Error saving final score:", error);
+    console.error("Error saving historical data:", error);
+  }
+};
+
+const getAllReviews = async (placeId) => {
+  try {
+    const relevantReviews = await fetchPlaceDetails(placeId, 'most_relevant');
+    const newReviews = await fetchPlaceDetails(placeId, 'newest');
+
+    const allReviews = [];
+    const seenReviewIds = new Set();
+
+    const addUniqueReviews = (reviews) => {
+      if (!reviews) return;
+      reviews.forEach(review => {
+        const reviewId = review.time?.toString() || review.author_name;
+        if (!seenReviewIds.has(reviewId)) {
+          seenReviewIds.add(reviewId);
+          allReviews.push({
+            text: review.text,
+            time: review.time,
+            author_name: review.author_name
+          });
+        }
+      });
+    };
+
+    addUniqueReviews(relevantReviews.reviews);
+    addUniqueReviews(newReviews.reviews);
+
+    return {
+      ...relevantReviews,
+      reviews: allReviews
+    };
+  } catch (error) {
+    console.error('Error fetching reviews:', error);
+    return null;
   }
 };
 
 export default function PlaceDetailsScreen() {
-  const { placeId } = useGlobalSearchParams(); // Retrieve placeId from route parameters
-
+  const { placeId } = useGlobalSearchParams();
   const [placeDetails, setPlaceDetails] = useState(null);
-  const [historicalScores, setHistoricalScores] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [finalScore, setFinalScore] = useState(0); // Add state for final score
-  const [currentSentimentScore, setCurrentSentimentScore] = useState(0); // Add state for current sentiment score
+  const [finalScore, setFinalScore] = useState(0);
+  const [currentSentimentScore, setCurrentSentimentScore] = useState(0);
+  const [historicalScore, setHistoricalScore] = useState(0);
 
   useEffect(() => {
     const getPlaceDetails = async () => {
       try {
-        const details = await fetchPlaceDetails(placeId);
+        setLoading(true);
+        
+        const historicalData = await fetchHistoricalData(placeId);
+        const details = await getAllReviews(placeId);
         setPlaceDetails(details);
-
-        if (details.reviews) {
-          const sentimentScore = calculateSentimentScore(details.reviews);
-          console.log("Sentiment Score:", sentimentScore);
-
-          // Update the current sentiment score in state
-          setCurrentSentimentScore(sentimentScore);
-
-          // Fetch historical scores
-          const historicalScores = await fetchHistoricalScores(placeId);
-          setHistoricalScores(historicalScores);
-
-          // Calculate the final score
-          const reviewScore = details.rating || 0; // Use the place's average rating
-          const calculatedFinalScore = calculateFinalScore(
-            historicalScores,
-            sentimentScore,
-            reviewScore
-          );
-          console.log("Final Score:", calculatedFinalScore);
-
-          // Save the final score to Firestore
-          await saveFinalScore(placeId, calculatedFinalScore);
-
-          // Update the final score in state
-          setFinalScore(calculatedFinalScore);
+        
+        if (details?.reviews) {
+          const aggregatedData = calculateAggregatedScore(historicalData, details.reviews);
+          
+          if (aggregatedData.newReviewsProcessed > 0) {
+            await saveHistoricalData(placeId, aggregatedData, details.rating || 0);
+            setCurrentSentimentScore(aggregatedData.currentSentimentScore);
+            setHistoricalScore(aggregatedData.historicalSentimentScore);
+            setFinalScore((aggregatedData.historicalSentimentScore + (details.rating || 0)) / 2);
+          } else {
+            setCurrentSentimentScore(0);
+            setHistoricalScore(historicalData.historicalSentimentScore || 0);
+            setFinalScore((historicalData.historicalSentimentScore + (details.rating || 0)) / 2);
+          }
         }
       } catch (error) {
-        console.error("Error fetching place details:", error);
+        console.error("Error in getPlaceDetails:", error);
       } finally {
         setLoading(false);
       }
@@ -232,42 +215,14 @@ export default function PlaceDetailsScreen() {
 
       <Text style={styles.sectionTitle}>Score Breakdown:</Text>
       <Text style={styles.breakdownText}>
-        Historical Average Score:{" "}
-        {historicalScores.length > 0
-          ? (
-              historicalScores.reduce(
-                (acc, score) => acc + (score.sentimentScore || 0),
-                0
-              ) / historicalScores.length
-            ).toFixed(2)
-          : "0.00"}
+        Historical Average Score: {historicalScore.toFixed(2)}
       </Text>
       <Text style={styles.breakdownText}>
         Current Sentiment Score: {currentSentimentScore.toFixed(2)}
       </Text>
       <Text style={styles.breakdownText}>
-        Review Score:{" "}
-        {placeDetails?.rating ? placeDetails.rating.toFixed(2) : "0.00"}
+        Google Review Score: {placeDetails?.rating ? placeDetails.rating.toFixed(2) : "0.00"}
       </Text>
-
-      <Text style={styles.sectionTitle}>Historical Trends:</Text>
-      {historicalScores.length > 0 ? (
-        <LineChart
-          data={historicalScores.map((score, index) => ({
-            value: score.sentimentScore,
-            label: `Day ${index + 1}`,
-          }))}
-          width={300}
-          height={200}
-          isAnimated
-          yAxisThickness={0}
-          xAxisThickness={0}
-          color="blue"
-          noOfSections={4}
-        />
-      ) : (
-        <Text>No historical data available.</Text>
-      )}
     </View>
   );
 }
@@ -301,5 +256,5 @@ const styles = StyleSheet.create({
   breakdownText: {
     fontSize: 16,
     marginBottom: 4,
-  },
+  }
 });
